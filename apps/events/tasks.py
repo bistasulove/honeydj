@@ -171,7 +171,7 @@ def _apply_enrichment(
         "path": event.path,
         "method": event.method,
         "decoy_type": event.decoy_type,
-        "country_code": profile.country_code,
+        "country": profile.country,
         "threat_score": profile.threat_score,
         "tags": profile.tags,
         "timestamp": event.timestamp.isoformat(),

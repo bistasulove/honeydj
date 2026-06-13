@@ -1,43 +1,42 @@
 # Session notes — 2026-06-14
 
 ## What was built
-- `apps/events/tasks.py` — `enrich_event` fully implemented (was a
-  placeholder). GeoIP + AbuseIPDB + TTP, atomic profile update, post-commit
-  WebSocket broadcast. Rich start/signals/done logging.
-- `apps/feeds/adapters/__init__.py` + `abuseipdb.py` (new) — typed `/check`
-  adapter; returns None on missing key or any HTTP/parse error.
-- `apps/events/ttp.py` (new) — regex classifier, 10 technique classes.
-- `honeydj/settings/base.py` — ABUSEIPDB_*, THREAT_FEED_TTL_DAYS,
-  KNOWN_SCANNER_JA3. `requirements/base.txt` — added `responses`.
-- Capture fixes: `apps/honeypot/decoys.py` (store `get_full_path()`),
-  `apps/honeypot/views.py` (decoy views now `csrf_exempt`).
-- mypy: `apps/{events,alerts}/tasks.py` (annotate `self: Task`, ignore[misc]),
-  `apps/{events,feeds,dashboard}/urls.py` + `dashboard/routing.py` (typed
-  lists), `setup.cfg` (relaxed strict for `tests.*` only).
-- Tests (new): `test_tasks.py`, `test_ttp.py`, `test_abuseipdb.py`; added
-  csrf/full-path/encoded cases to `test_views.py`.
+- `apps/events/consumers.py` (new) — `EventConsumer(AsyncWebsocketConsumer)`:
+  connect joins group `events` + accepts; disconnect leaves group;
+  `event_enriched` handler projects the incoming `row` onto `CLIENT_FIELDS`
+  (id, ip, path, decoy_type, country, threat_score, tags, timestamp) and sends
+  JSON. Allowlist drops anything extra so payloads stay small.
+- `apps/events/routing.py` (new) — `ws/events/` → `EventConsumer.as_asgi()`.
+- `honeydj/asgi.py` — repointed websocket URLRouter from the (empty)
+  `apps.dashboard.routing` to `apps.events.routing`. HTTP still via
+  `get_asgi_application()`.
+- `apps/events/tasks.py` — broadcast row key `country_code` → `country`
+  (`profile.country`) to match the client contract. (channels/channels-redis,
+  CHANNEL_LAYERS, ASGI_APPLICATION, and the on_commit broadcast were already done.)
+- `tests/test_consumers.py` (new) — 3 WebsocketCommunicator scenarios:
+  connect+join, group msg forwarded trimmed, clean disconnect.
 
 ## Key decisions
-- Idempotency: skip if `enriched=True`; all scoring in one
-  `select_for_update` txn (event then profile) so concurrent tasks for the
-  same IP can't double-count. +10/new tag, +20 first AbuseIPDB>50, +30 first
-  scanner JA3, cap 100. AbuseIPDB-once enforced via ThreatFeedEntry `created`.
-- TTP scans raw + URL-decoded text to catch %20/+/%2f evasions.
-- HTTP I/O outside the txn; broadcast via `transaction.on_commit`.
+- No `pytest-asyncio` dependency: drive communicator with `async_to_sync`
+  (one event loop per scenario) + `InMemoryChannelLayer` (no Redis in tests).
+  Fixture clears `channel_layers.backends` so consumer + test share one layer.
+- Consumer enforces the field allowlist (single source of truth); tasks.py may
+  broadcast a richer row, consumer trims.
 
 ## Broken / incomplete
-- `EventConsumer` / `dashboard/routing.py` still empty — broadcast (type
-  `event.enriched`) has no subscriber yet.
+- No dashboard UI — nothing renders rows in a browser; observe via raw WS client.
+- `apps/dashboard/routing.py` now orphaned (empty, unreferenced); left for future.
 - `alerts/tasks.py` `dispatch_alert` still a placeholder.
-- No `GeoLite2-City.mmdb` and no ABUSEIPDB_API_KEY locally → those steps skip.
 
 ## Next task to resume from
-Build `apps/events/consumers.py` `EventConsumer` (handle `event.enriched`),
-wire `dashboard/routing.py`, and the HTMX `hx-ext="ws"` table row.
+Build the HTMX dashboard: a view/template with `hx-ext="ws"` subscribed to
+`/ws/events/` that prepends each pushed row to a live event table.
 
 ## Gotchas
-- Celery does NOT hot-reload; web container holds capture code. After code
-  changes: `docker compose restart celery web`.
-- Tests/lint/mypy run in docker. `responses` was pip-installed into the live
-  container (root) — rebuild to persist from requirements.
-- `mypy .` clean; app code strict, `tests.*` relaxed. 60 tests, 92.7%.
+- Consumer tests MUST be `@pytest.mark.django_db` — Channels calls
+  `close_old_connections()` per dispatch; passes alone, fails after any DB test.
+- daphne/celery do NOT hot-reload: `docker compose restart web celery` after edits.
+- No browser WS tool? Use devtools console `new WebSocket(...)`; wscat/websocat
+  and the python `websockets` lib are not installed anywhere.
+- 63 tests pass, 92.4%; ruff + mypy clean (consumer needs `# type: ignore[misc]`
+  on the AsyncWebsocketConsumer subclass).
