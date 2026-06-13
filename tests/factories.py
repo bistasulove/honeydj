@@ -9,7 +9,7 @@ from factory.django import DjangoModelFactory
 from apps.alerts.models import AlertRule
 from apps.events.models import HoneyEvent
 from apps.feeds.models import ThreatFeedEntry
-from apps.honeypot.models import CanaryToken
+from apps.honeypot.models import CanaryToken, DecoyRoute
 from apps.profiles.models import AttackerProfile
 
 User = get_user_model()
@@ -69,6 +69,19 @@ class CanaryTokenFactory(DjangoModelFactory):
     triggered = False
     triggered_at = None
     trigger_ip = None
+
+
+class DecoyRouteFactory(DjangoModelFactory):
+    class Meta:
+        model = DecoyRoute
+
+    path_pattern = factory.Sequence(lambda n: f"/decoy/{n}/")
+    is_regex = False
+    decoy_type = DecoyRoute.DecoyType.ADMIN
+    response_template = "default"
+    is_active = True
+    description = factory.Faker("sentence", nb_words=5)
+    priority = 0
 
 
 class AlertRuleFactory(DjangoModelFactory):

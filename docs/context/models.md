@@ -52,3 +52,16 @@ source (CharField 50)         # abuseipdb/virustotal
 confidence (SmallIntegerField)
 category (CharField 100, null)
 expires_at (DateTimeField, db_index)  # Celery beat purges expired
+
+## DecoyRoute
+path_pattern (CharField 500)      # e.g. /wp-admin/, /\.env$, /api/debug/
+is_regex (BooleanField default False)
+decoy_type (CharField 50)         # admin/env/wpAdmin/api/custom
+response_template (CharField 100) # which fake response to return
+is_active (BooleanField default True, db_index)
+description (CharField 200, blank)
+created_at (DateTimeField auto_now_add)
+priority (SmallIntegerField default 0)  # higher = matched first
+
+class Meta:
+    ordering = ['-priority', 'path_pattern']

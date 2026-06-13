@@ -27,3 +27,27 @@ class CanaryToken(models.Model):
 
     def __str__(self) -> str:
         return f"{self.label} ({self.token_type})"
+
+
+class DecoyRoute(models.Model):
+    class DecoyType(models.TextChoices):
+        ADMIN = "admin", "Admin"
+        ENV = "env", "Env"
+        WP_ADMIN = "wpAdmin", "WP Admin"
+        API = "api", "API"
+        CUSTOM = "custom", "Custom"
+
+    path_pattern = models.CharField(max_length=500)
+    is_regex = models.BooleanField(default=False)
+    decoy_type = models.CharField(max_length=50, choices=DecoyType.choices)
+    response_template = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True, db_index=True)
+    description = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    priority = models.SmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ["-priority", "path_pattern"]
+
+    def __str__(self) -> str:
+        return f"{self.path_pattern} ({self.decoy_type})"
