@@ -18,7 +18,15 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 
+# Obscures the admin mount point so the honeypot's own control panel is not
+# guessable from the default /admin/ path. Mounted in honeydj/urls.py.
+ADMIN_URL_SUFFIX = env("ADMIN_URL_SUFFIX", default="console")
+
 DJANGO_APPS = [
+    # django-unfold must precede django.contrib.admin so it can override the
+    # admin templates and styling.
+    "unfold",
+    "unfold.contrib.filters",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -174,6 +182,15 @@ LOGGING = {
             "propagate": False,
         },
     },
+}
+
+# django-unfold admin theming
+UNFOLD = {
+    "SITE_TITLE": "HoneyDjango",
+    "SITE_HEADER": "HoneyDjango Console",
+    "SITE_SUBHEADER": "Honeypot threat intelligence",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
 }
 
 GEOIP_PATH = env("GEOIP_PATH", default=str(BASE_DIR / "geoip"))
