@@ -160,7 +160,9 @@ def capture_event(request: HttpRequest, decoy_type: str) -> HoneyEvent | None:
         return None
     return HoneyEvent.objects.create(
         ip=ip,
-        path=request.path[:MAX_PATH_CHARS],
+        # Full path, not request.path — the query string carries SQLi/traversal
+        # payloads the TTP classifier needs to see.
+        path=request.get_full_path()[:MAX_PATH_CHARS],
         method=request.method or "",
         headers=capture_headers(request),
         body=capture_body(request),

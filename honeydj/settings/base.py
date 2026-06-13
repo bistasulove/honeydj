@@ -177,3 +177,12 @@ LOGGING = {
 }
 
 GEOIP_PATH = env("GEOIP_PATH", default=str(BASE_DIR / "geoip"))
+
+# Threat enrichment
+ABUSEIPDB_API_KEY = env("ABUSEIPDB_API_KEY", default="")
+ABUSEIPDB_MAX_AGE_DAYS = env.int("ABUSEIPDB_MAX_AGE_DAYS", default=90)
+ABUSEIPDB_TIMEOUT = env.float("ABUSEIPDB_TIMEOUT", default=5.0)
+# Cache AbuseIPDB verdicts as ThreatFeedEntry rows for this long before re-querying.
+THREAT_FEED_TTL_DAYS = env.int("THREAT_FEED_TTL_DAYS", default=7)
+# JA3 fingerprints of known mass scanners (zgrab, masscan, etc.).
+KNOWN_SCANNER_JA3 = env.list("KNOWN_SCANNER_JA3", default=[])

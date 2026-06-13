@@ -1,5 +1,5 @@
-from django.urls import path
+from django.urls import URLPattern, URLResolver
 
 app_name = "dashboard"
 
-urlpatterns: list = []
+urlpatterns: list[URLPattern | URLResolver] = []

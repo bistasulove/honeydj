@@ -1,40 +1,43 @@
-# Session notes — 2026-06-13
+# Session notes — 2026-06-14
 
 ## What was built
-- `apps/honeypot/middleware.py` — `HoneyMiddleware`: in-process route cache
-  (`_route_cache`/`_regex_cache`/`_cache_loaded_at`, 60s TTL), two-pass match
-  (exact then regex), event capture, Redis rate limiting, decoy responses,
-  Celery dispatch.
-- `apps/honeypot/apps.py` — `ready()` wires `post_save`/`post_delete` on
-  `DecoyRoute` to `invalidate_route_cache`.
-- `honeydj/settings/base.py` — added `HoneyMiddleware` after `SecurityMiddleware`.
-- `apps/events/geoip.py` — maxminddb wrapper for the Celery task (NOT called
-  from middleware). Cached reader, empty-dict fallback if DB file absent.
-- `tests/conftest.py`, `tests/test_middleware.py`, `tests/test_geoip.py` —
-  15 tests, all passing. conftest resets the module-level route cache and
-  swaps in a locmem cache so tests need no Redis.
+- `apps/events/tasks.py` — `enrich_event` fully implemented (was a
+  placeholder). GeoIP + AbuseIPDB + TTP, atomic profile update, post-commit
+  WebSocket broadcast. Rich start/signals/done logging.
+- `apps/feeds/adapters/__init__.py` + `abuseipdb.py` (new) — typed `/check`
+  adapter; returns None on missing key or any HTTP/parse error.
+- `apps/events/ttp.py` (new) — regex classifier, 10 technique classes.
+- `honeydj/settings/base.py` — ABUSEIPDB_*, THREAT_FEED_TTL_DAYS,
+  KNOWN_SCANNER_JA3. `requirements/base.txt` — added `responses`.
+- Capture fixes: `apps/honeypot/decoys.py` (store `get_full_path()`),
+  `apps/honeypot/views.py` (decoy views now `csrf_exempt`).
+- mypy: `apps/{events,alerts}/tasks.py` (annotate `self: Task`, ignore[misc]),
+  `apps/{events,feeds,dashboard}/urls.py` + `dashboard/routing.py` (typed
+  lists), `setup.cfg` (relaxed strict for `tests.*` only).
+- Tests (new): `test_tasks.py`, `test_ttp.py`, `test_abuseipdb.py`; added
+  csrf/full-path/encoded cases to `test_views.py`.
 
 ## Key decisions
-- GeoIP runs in the Celery `enrich_event` task, NOT middleware (per
-  architecture.md; keeps hot path I/O-free). User confirmed this choice.
-- Route cache is in-process Python globals (speed), not Redis. Rate-limit
-  counter IS Redis (`honeydj:ratelimit:{ip}`, db 0, SET NX + INCR, 5min/50).
+- Idempotency: skip if `enriched=True`; all scoring in one
+  `select_for_update` txn (event then profile) so concurrent tasks for the
+  same IP can't double-count. +10/new tag, +20 first AbuseIPDB>50, +30 first
+  scanner JA3, cap 100. AbuseIPDB-once enforced via ThreatFeedEntry `created`.
+- TTP scans raw + URL-decoded text to catch %20/+/%2f evasions.
+- HTTP I/O outside the txn; broadcast via `transaction.on_commit`.
 
 ## Broken / incomplete
-- `apps/events/tasks.py` `enrich_event` is still a logging placeholder — no
-  GeoIP/AttackerProfile/AbuseIPDB/TTP/WebSocket yet.
-- mypy reports 2 pre-existing errors in tasks.py (untyped `@shared_task`).
-- Decoy fake views (FakeAdminView etc.) not built; middleware renders inline.
+- `EventConsumer` / `dashboard/routing.py` still empty — broadcast (type
+  `event.enriched`) has no subscriber yet.
+- `alerts/tasks.py` `dispatch_alert` still a placeholder.
+- No `GeoLite2-City.mmdb` and no ABUSEIPDB_API_KEY locally → those steps skip.
 
 ## Next task to resume from
-Implement `enrich_event(event_id)` in `apps/events/tasks.py` per
-architecture.md steps 1-8, using `apps/events/geoip.py` for step 2.
+Build `apps/events/consumers.py` `EventConsumer` (handle `event.enriched`),
+wire `dashboard/routing.py`, and the HTMX `hx-ext="ws"` table row.
 
 ## Gotchas
-- `MIDDLEWARE`/settings changes need `docker compose restart web` (read once
-  at boot). Route DB changes do NOT (signal/TTL handle it).
-- post_save signal only invalidates the cache in the process that saved.
-  `manage.py shell` is a separate process → web sees new route only after 60s TTL.
-- No `curl` in web image; use python urllib or browser (port 8000 mapped).
-- RedisCache prefixes keys: `:1:honeydj:ratelimit:<ip>`.
-- Demo left DecoyRoute pk=1 (`/.env`) + 2 HoneyEvents in local DB.
+- Celery does NOT hot-reload; web container holds capture code. After code
+  changes: `docker compose restart celery web`.
+- Tests/lint/mypy run in docker. `responses` was pip-installed into the live
+  container (root) — rebuild to persist from requirements.
+- `mypy .` clean; app code strict, `tests.*` relaxed. 60 tests, 92.7%.

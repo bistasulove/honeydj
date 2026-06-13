@@ -14,7 +14,9 @@ answered the same way.
 import logging
 
 from django.http import HttpRequest, HttpResponse
+from django.utils.decorators import method_decorator
 from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 
 from apps.events.tasks import enrich_event
 from apps.honeypot import decoys
@@ -23,10 +25,16 @@ from apps.honeypot.models import DecoyRoute
 logger = logging.getLogger(__name__)
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class _DecoyView(View):
     """Base view: capture the hit, dispatch enrichment, return the decoy response.
 
     Subclasses set ``decoy_type`` to one of DecoyRoute.DecoyType.
+
+    CSRF-exempt: attackers POST credentials and payloads without a token, and
+    capturing those is the whole point — a 403 would discard them before
+    ``dispatch`` runs. (Decoys read the request and return canned content; they
+    never mutate honeypot state, so exempting them is safe.)
     """
 
     decoy_type: str

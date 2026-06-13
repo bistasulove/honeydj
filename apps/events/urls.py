@@ -1,5 +1,5 @@
-from django.urls import path
+from django.urls import URLPattern, URLResolver
 
 app_name = "events"
 
-urlpatterns: list = []
+urlpatterns: list[URLPattern | URLResolver] = []

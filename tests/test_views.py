@@ -1,5 +1,5 @@
 import pytest
-from django.test import RequestFactory
+from django.test import Client, RequestFactory
 from django.urls import reverse
 
 from apps.events.models import HoneyEvent
@@ -75,6 +75,26 @@ def test_view_captures_post_body_and_strips_sensitive_headers(rf, dispatched):
     assert "cookie" not in lowered
     assert "authorization" not in lowered
     assert event.headers.get("X-Custom") == "keepme"
+
+
+def test_query_string_is_captured(rf, dispatched):
+    """The query string carries SQLi/traversal payloads, so it must be stored too."""
+    request = rf.get("/api/debug/", {"id": "1 UNION SELECT password FROM users"})
+    views.FakeApiDebugView.as_view()(request)
+
+    event = HoneyEvent.objects.get()
+    assert event.path.startswith("/api/debug/?id=")
+    assert "UNION" in event.path
+
+
+def test_post_is_csrf_exempt(dispatched):
+    """Attacker POSTs carry no CSRF token; the decoy must capture them, not 403."""
+    csrf_client = Client(enforce_csrf_checks=True)
+    response = csrf_client.post("/wp-login.php", data={"log": "admin", "pwd": "x"})
+
+    assert response.status_code == 200
+    event = HoneyEvent.objects.get()
+    assert event.method == "POST"
 
 
 def test_view_respects_rate_limit(rf, dispatched, monkeypatch):
