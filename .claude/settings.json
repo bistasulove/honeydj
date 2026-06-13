@@ -1,0 +1,43 @@
+{
+  "model": "claude-sonnet-4-6",
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(docker-compose:*)",
+      "Bash(python manage.py:*)",
+      "Bash(pip:*)",
+      "Bash(cat:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Read(**)",
+      "Write(apps/**)",
+      "Write(honeydj/**)",
+      "Write(docs/**)",
+      "Write(requirements/**)",
+      "Write(docker-compose.yml)",
+      "Write(Dockerfile)",
+      "Write(.env.example)",
+      "Write(CLAUDE.md)",
+      "Write(.claudeignore)"
+    ],
+    "deny": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(rm -rf:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Read(.env)",
+      "Read(.claude/settings.local.json)"
+    ]
+  },
+  "attribution": {
+    "commit": ""
+  },
+  "autoCompact": true,
+  "autoCompactThreshold": 0.70
+}

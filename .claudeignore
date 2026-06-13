@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.egg-info/
+
+# Django
+staticfiles/
+mediafiles/
+*.sqlite3
+
+# Docker / infra
+.docker/
+
+# Secrets (belt-and-suspenders with settings.json deny)
+.env
+.env.*
+!.env.example
+
+# Deps (huge, never useful in context)
+node_modules/
+venv/
+.venv/
+
+# OS
+.DS_Store
+.idea/
+.vscode/
+
+# GeoIP databases (binary, large)
+*.mmdb
+
+# Logs
+logs/
+*.log

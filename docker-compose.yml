@@ -1,0 +1,62 @@
+version: "3.11"
+
+x-django: &django
+  build: .
+  env_file: .env
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  volumes:
+    - .:/app
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: honeydj
+      POSTGRES_USER: honeydj
+      POSTGRES_PASSWORD: honeydj
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honeydj"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    <<: *django
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             daphne -b 0.0.0.0 -p 8000 honeydj.asgi:application"
+    ports:
+      - "8000:8000"
+
+  celery:
+    <<: *django
+    command: celery -A honeydj worker -l info -Q default,enrichment,alerts
+    healthcheck:
+      test: ["CMD", "celery", "-A", "honeydj", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  beat:
+    <<: *django
+    command: celery -A honeydj beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+volumes:
+  postgres_data:
+  redis_data:
