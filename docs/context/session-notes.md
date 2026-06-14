@@ -1,42 +1,38 @@
 # Session notes — 2026-06-14
 
-## What was built
-- `apps/events/consumers.py` (new) — `EventConsumer(AsyncWebsocketConsumer)`:
-  connect joins group `events` + accepts; disconnect leaves group;
-  `event_enriched` handler projects the incoming `row` onto `CLIENT_FIELDS`
-  (id, ip, path, decoy_type, country, threat_score, tags, timestamp) and sends
-  JSON. Allowlist drops anything extra so payloads stay small.
-- `apps/events/routing.py` (new) — `ws/events/` → `EventConsumer.as_asgi()`.
-- `honeydj/asgi.py` — repointed websocket URLRouter from the (empty)
-  `apps.dashboard.routing` to `apps.events.routing`. HTTP still via
-  `get_asgi_application()`.
-- `apps/events/tasks.py` — broadcast row key `country_code` → `country`
-  (`profile.country`) to match the client contract. (channels/channels-redis,
-  CHANNEL_LAYERS, ASGI_APPLICATION, and the on_commit broadcast were already done.)
-- `tests/test_consumers.py` (new) — 3 WebsocketCommunicator scenarios:
-  connect+join, group msg forwarded trimmed, clean disconnect.
+## What was built — live attack map dashboard
+- `apps/dashboard/views.py` (new) — `MapDataView` (LoginRequired): last 500
+  geolocated `AttackerProfile`s as GeoJSON, 30s server-side cache
+  (`dashboard:map_data` key). `DashboardView` (LoginRequired TemplateView):
+  headline counters (total events, unique attackers, top-5 decoy types).
+- `apps/dashboard/templates/dashboard/` (new) — `base.html` (standalone shell,
+  Tailwind/HTMX/Alpine/Leaflet via CDN), `map.html`, `partials/_stats.html`.
+- `apps/dashboard/static/dashboard/` (new) — `map.js` (Leaflet island),
+  `dashboard.css` (pulse animation).
+- `apps/dashboard/urls.py` — `map` + `map_data` routes.
+- `honeydj/urls.py` — dashboard mounted under the admin prefix
+  (`/hd-{ADMIN_URL_SUFFIX}/dashboard/`), before `admin.site.urls`.
+- `honeydj/settings/base.py` — `UNFOLD["SIDEBAR"]` nav (replaces auto app list);
+  added "Live Map" link + the 3 model changelists.
+- `apps/events/tasks.py` + `consumers.py` — added `lat`/`lon` to the enriched
+  WebSocket payload so live hits can be plotted.
 
 ## Key decisions
-- No `pytest-asyncio` dependency: drive communicator with `async_to_sync`
-  (one event loop per scenario) + `InMemoryChannelLayer` (no Redis in tests).
-  Fixture clears `channel_layers.backends` so consumer + test share one layer.
-- Consumer enforces the field allowlist (single source of truth); tasks.py may
-  broadcast a richer row, consumer trims.
-
-## Broken / incomplete
-- No dashboard UI — nothing renders rows in a browser; observe via raw WS client.
-- `apps/dashboard/routing.py` now orphaned (empty, unreferenced); left for future.
-- `alerts/tasks.py` `dispatch_alert` still a placeholder.
-
-## Next task to resume from
-Build the HTMX dashboard: a view/template with `hx-ext="ws"` subscribed to
-`/ws/events/` that prepends each pushed row to a live event table.
+- **Standalone shell, not embedded in unfold admin.** unfold is CRUD chrome; its
+  flex layout broke Leaflet. Own shell = layout control + scalable (stable JSON
+  endpoints, partials, static JS islands; "CDN now, build later").
+- Map = config-driven JS island reading `data-*` attrs; no inline JS, so re-skin
+  doesn't touch logic.
 
 ## Gotchas
-- Consumer tests MUST be `@pytest.mark.django_db` — Channels calls
-  `close_old_connections()` per dispatch; passes alone, fails after any DB test.
-- daphne/celery do NOT hot-reload: `docker compose restart web celery` after edits.
-- No browser WS tool? Use devtools console `new WebSocket(...)`; wscat/websocat
-  and the python `websockets` lib are not installed anywhere.
-- 63 tests pass, 92.4%; ruff + mypy clean (consumer needs `# type: ignore[misc]`
-  on the AsyncWebsocketConsumer subclass).
+- **Map glitch root cause:** Leaflet cached container size before layout settled.
+  Fixed via `invalidateSize()` after first paint + on ResizeObserver.
+- **Live pulse needs coords:** localhost/LAN IPs don't geolocate → null lat/lon →
+  no marker. Test WS path via `group_send` shell with a public-IP row.
+- Persistent dots come from the 30s poll, NOT the WS (pulse is ephemeral, 3s).
+- Dashboard is login-required (`admin:login`), not staff-gated — revisit if
+  non-staff users ever exist.
+
+## Next task to resume from
+Wire HTMX auto-refresh on `_stats.html` (hx-get + interval → stats partial) and
+add a live event-table partial fed by the `/ws/events/` socket.

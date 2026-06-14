@@ -1,0 +1,23 @@
+/* Dashboard-specific styles that Tailwind utilities can't express inline.
+   Currently just the pulsing "live attack" marker injected by map.js. */
+
+.live-attack-pulse {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(220, 38, 38, 0.9);
+  box-shadow: 0 0 0 rgba(220, 38, 38, 0.7);
+  animation: live-attack-pulse 1.2s ease-out 2, live-attack-fade 3s forwards;
+}
+
+@keyframes live-attack-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+  100% { box-shadow: 0 0 0 22px rgba(220, 38, 38, 0); }
+}
+
+@keyframes live-attack-fade {
+  to { opacity: 0; }
+}
+
+/* Leaflet popups read better on the dark shell. */
+.leaflet-popup-content { font-size: 12px; line-height: 1.5; }

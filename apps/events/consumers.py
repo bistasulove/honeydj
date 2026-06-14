@@ -30,6 +30,10 @@ CLIENT_FIELDS = (
     "threat_score",
     "tags",
     "timestamp",
+    # Coordinates drive the live map's pulsing "new attack" marker; may be null
+    # when GeoIP couldn't locate the IP, in which case the map skips the marker.
+    "lat",
+    "lon",
 )
 
 

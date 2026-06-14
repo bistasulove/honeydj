@@ -175,6 +175,10 @@ def _apply_enrichment(
         "threat_score": profile.threat_score,
         "tags": profile.tags,
         "timestamp": event.timestamp.isoformat(),
+        # Coordinates let the live map drop a pulsing marker for this hit. Cast
+        # the Decimal fields to float (JSON-safe) and pass None on a GeoIP miss.
+        "lat": float(profile.lat) if profile.lat is not None else None,
+        "lon": float(profile.lon) if profile.lon is not None else None,
     }
 
 

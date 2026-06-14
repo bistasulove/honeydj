@@ -1,0 +1,21 @@
+{% comment %}
+Headline counter strip. A partial so it can later be refreshed on its own via
+HTMX (e.g. hx-get a stats endpoint on an interval) without touching the map.
+For now it renders from the DashboardView context on full page load.
+{% endcomment %}
+<section class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+  <div class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
+    <div class="text-2xl font-bold text-slate-50">{{ total_events }}</div>
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">Total events</div>
+  </div>
+  <div class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
+    <div class="text-2xl font-bold text-slate-50">{{ unique_attackers }}</div>
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">Unique attackers</div>
+  </div>
+  {% for decoy in top_decoys %}
+  <div class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
+    <div class="text-2xl font-bold text-slate-50">{{ decoy.hits }}</div>
+    <div class="text-[11px] uppercase tracking-wider text-slate-500">{{ decoy.decoy_type }}</div>
+  </div>
+  {% endfor %}
+</section>

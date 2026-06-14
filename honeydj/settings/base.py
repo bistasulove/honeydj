@@ -1,6 +1,8 @@
 from pathlib import Path
 
 import environ
+from django.urls import reverse_lazy
+from django.utils.translation import gettext_lazy as _
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -191,6 +193,45 @@ UNFOLD = {
     "SITE_SUBHEADER": "Honeypot threat intelligence",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": False,
+    # Defining a sidebar navigation replaces unfold's auto-generated app list,
+    # so the model changelists are listed explicitly alongside the Live Map.
+    "SIDEBAR": {
+        "show_search": True,
+        "navigation": [
+            {
+                "title": _("Dashboard"),
+                "items": [
+                    {
+                        "title": _("Live Map"),
+                        "icon": "public",
+                        "link": reverse_lazy("dashboard:map"),
+                    },
+                ],
+            },
+            {
+                "title": _("Intelligence"),
+                "items": [
+                    {
+                        "title": _("Events"),
+                        "icon": "bolt",
+                        "link": reverse_lazy("admin:events_honeyevent_changelist"),
+                    },
+                    {
+                        "title": _("Attacker Profiles"),
+                        "icon": "person_search",
+                        "link": reverse_lazy(
+                            "admin:profiles_attackerprofile_changelist"
+                        ),
+                    },
+                    {
+                        "title": _("Decoy Routes"),
+                        "icon": "route",
+                        "link": reverse_lazy("admin:honeypot_decoyroute_changelist"),
+                    },
+                ],
+            },
+        ],
+    },
 }
 
 GEOIP_PATH = env("GEOIP_PATH", default=str(BASE_DIR / "geoip"))
