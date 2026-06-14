@@ -16,14 +16,16 @@
   {% endcomment %}
   <div
     id="attack-map"
-    class="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800"
-    style="min-height: 500px;"
+    class="min-h-[400px] flex-1 overflow-hidden rounded-lg border border-slate-800"
     data-map-data-url="{% url 'dashboard:map_data' %}"
     data-ws-path="/ws/events/"
   ></div>
+
+  {% include "dashboard/partials/_event_table.html" %}
 {% endblock %}
 
 {% block body_scripts %}
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="{% static 'dashboard/map.js' %}" defer></script>
+  <script src="{% static 'dashboard/event_table.js' %}" defer></script>
 {% endblock %}

@@ -29,6 +29,11 @@ MAP_PROFILE_LIMIT = 500
 MAP_CACHE_KEY = "dashboard:map_data"
 MAP_CACHE_TTL = 30  # seconds — matches the client's poll interval
 
+# How many recent events to seed the live table with on page load. Matches the
+# client-side cap (data-max-rows) so a refresh shows the same window the live
+# stream would have built up to.
+LIVE_TABLE_LIMIT = 50
+
 
 class MapDataView(LoginRequiredMixin, View):
     """Return the last 500 geolocated attacker profiles as GeoJSON.
@@ -82,6 +87,24 @@ class MapDataView(LoginRequiredMixin, View):
         return {"type": "FeatureCollection", "features": features}
 
 
+def _headline_context() -> dict[str, Any]:
+    """Build the headline counter strip shown by both the full page and the poll.
+
+    Shared by ``DashboardView`` (full page load) and ``StatsView`` (the HTMX
+    poll) so the numbers are computed in exactly one place.
+    """
+    top_decoys = (
+        HoneyEvent.objects.values("decoy_type")
+        .annotate(hits=Count("id"))
+        .order_by("-hits")[:5]
+    )
+    return {
+        "total_events": HoneyEvent.objects.count(),
+        "unique_attackers": AttackerProfile.objects.count(),
+        "top_decoys": list(top_decoys),
+    }
+
+
 class DashboardView(LoginRequiredMixin, TemplateView):
     """Render the live attack map with a few headline counters."""
 
@@ -90,16 +113,32 @@ class DashboardView(LoginRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
         context = super().get_context_data(**kwargs)
-        top_decoys = (
-            HoneyEvent.objects.values("decoy_type")
-            .annotate(hits=Count("id"))
-            .order_by("-hits")[:5]
+        context.update(_headline_context())
+        # Seed the live table with the most recent enriched events so a page
+        # refresh isn't blank — the WebSocket stream prepends newer ones on top.
+        # select_related pulls each event's attacker in one join (no N+1) for the
+        # country/threat/tags columns, which live on the profile.
+        context["recent_events"] = (
+            HoneyEvent.objects.filter(enriched=True)
+            .select_related("attacker")
+            .order_by("-timestamp")[:LIVE_TABLE_LIMIT]
         )
-        context.update(
-            {
-                "total_events": HoneyEvent.objects.count(),
-                "unique_attackers": AttackerProfile.objects.count(),
-                "top_decoys": list(top_decoys),
-            }
-        )
+        return context
+
+
+class StatsView(LoginRequiredMixin, TemplateView):
+    """Render just the headline counter strip for HTMX auto-refresh.
+
+    The ``_stats.html`` partial polls this endpoint (``hx-trigger="every 10s"``)
+    and swaps itself with the response, so the counters stay live without a full
+    page reload. The partial's root element re-declares the poll, so each swapped
+    response keeps the cycle going.
+    """
+
+    login_url = reverse_lazy("admin:login")
+    template_name = "dashboard/partials/_stats.html"
+
+    def get_context_data(self, **kwargs: Any) -> dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context.update(_headline_context())
         return context

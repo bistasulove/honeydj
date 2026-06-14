@@ -1,38 +1,38 @@
-# Session notes — 2026-06-14
+# Session notes — 2026-06-14 (dashboard groundwork close-out)
 
-## What was built — live attack map dashboard
-- `apps/dashboard/views.py` (new) — `MapDataView` (LoginRequired): last 500
-  geolocated `AttackerProfile`s as GeoJSON, 30s server-side cache
-  (`dashboard:map_data` key). `DashboardView` (LoginRequired TemplateView):
-  headline counters (total events, unique attackers, top-5 decoy types).
-- `apps/dashboard/templates/dashboard/` (new) — `base.html` (standalone shell,
-  Tailwind/HTMX/Alpine/Leaflet via CDN), `map.html`, `partials/_stats.html`.
-- `apps/dashboard/static/dashboard/` (new) — `map.js` (Leaflet island),
-  `dashboard.css` (pulse animation).
-- `apps/dashboard/urls.py` — `map` + `map_data` routes.
-- `honeydj/urls.py` — dashboard mounted under the admin prefix
-  (`/hd-{ADMIN_URL_SUFFIX}/dashboard/`), before `admin.site.urls`.
-- `honeydj/settings/base.py` — `UNFOLD["SIDEBAR"]` nav (replaces auto app list);
-  added "Live Map" link + the 3 model changelists.
-- `apps/events/tasks.py` + `consumers.py` — added `lat`/`lon` to the enriched
-  WebSocket payload so live hits can be plotted.
+## What was built — live stats poll + live event table
+- `apps/dashboard/views.py` — extracted `_headline_context()` (shared); added
+  `StatsView` (LoginRequired TemplateView) rendering `partials/_stats.html` alone
+  with fresh counts. `DashboardView` now reuses the helper.
+- `apps/dashboard/urls.py` — new `dashboard:stats` route (`stats/`).
+- `templates/dashboard/partials/_stats.html` — root `<section>` now polls:
+  `hx-get=dashboard:stats hx-trigger="every 10s" hx-swap="outerHTML"`.
+- `templates/dashboard/partials/_event_table.html` (new) — table + `<template>`
+  row blueprint; section carries `hx-ext="ws" ws-connect="/ws/events/"`,
+  `data-rows-target="#event-rows"`, `data-max-rows="50"`.
+- `static/dashboard/event_table.js` (new) — JS island; parses WS JSON, clones
+  template, prepends row, caps at 50, colours threat score.
+- `templates/dashboard/base.html` — loads `htmx-ext-ws@2.0.3` after htmx core.
+- `templates/dashboard/map.html` — includes `_event_table.html` + `event_table.js`.
 
 ## Key decisions
-- **Standalone shell, not embedded in unfold admin.** unfold is CRUD chrome; its
-  flex layout broke Leaflet. Own shell = layout control + scalable (stable JSON
-  endpoints, partials, static JS islands; "CDN now, build later").
-- Map = config-driven JS island reading `data-*` attrs; no inline JS, so re-skin
-  doesn't touch logic.
+- **Stats poll is self-winding:** StatsView returns the same partial with the
+  same hx-* attrs, so each outerHTML swap keeps polling. One source of truth via
+  `_headline_context()`.
+- **htmx-ws holds the socket, JS island renders.** The `/ws/events/` consumer
+  sends JSON (map.js needs lat/lon), but the htmx WS ext expects HTML. So htmx
+  owns connection/reconnect; `event_table.js` hooks `htmx:wsAfterMessage`,
+  parses JSON, builds the row. Markup stays in the template.
+
+## Broken / incomplete
+- **Not verified live** — needs `docker-compose up` + a public-IP event to push
+  a real WS row. Python compiles; templates/URLs consistent. No model changes.
 
 ## Gotchas
-- **Map glitch root cause:** Leaflet cached container size before layout settled.
-  Fixed via `invalidateSize()` after first paint + on ResizeObserver.
-- **Live pulse needs coords:** localhost/LAN IPs don't geolocate → null lat/lon →
-  no marker. Test WS path via `group_send` shell with a public-IP row.
-- Persistent dots come from the 30s poll, NOT the WS (pulse is ephemeral, 3s).
-- Dashboard is login-required (`admin:login`), not staff-gated — revisit if
-  non-staff users ever exist.
+- Page now opens **two** sockets to `/ws/events/` (map + table). Works; future
+  cleanup could share one.
+- htmx-ws ext must load after htmx core (defer preserves order) — done in base.
 
 ## Next task to resume from
-Wire HTMX auto-refresh on `_stats.html` (hx-get + interval → stats partial) and
-add a live event-table partial fed by the `/ws/events/` socket.
+JA3 fingerprinting (Month 3). First verify the live table renders a row with the
+stack up.

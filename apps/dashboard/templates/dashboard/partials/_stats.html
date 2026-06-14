@@ -1,9 +1,18 @@
 {% comment %}
-Headline counter strip. A partial so it can later be refreshed on its own via
-HTMX (e.g. hx-get a stats endpoint on an interval) without touching the map.
-For now it renders from the DashboardView context on full page load.
+Headline counter strip, refreshed on its own via HTMX without touching the map.
+
+The root <section> polls dashboard:stats every 10s and swaps ITSELF
+(hx-swap="outerHTML") with the response — which is this same partial, re-rendered
+by StatsView with fresh counts. Because the replacement carries the same hx-*
+attributes, the poll is self-sustaining. On full page load DashboardView supplies
+the initial numbers; htmx takes over from there.
 {% endcomment %}
-<section class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+<section
+  class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5"
+  hx-get="{% url 'dashboard:stats' %}"
+  hx-trigger="every 10s"
+  hx-swap="outerHTML"
+>
   <div class="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3">
     <div class="text-2xl font-bold text-slate-50">{{ total_events }}</div>
     <div class="text-[11px] uppercase tracking-wider text-slate-500">Total events</div>

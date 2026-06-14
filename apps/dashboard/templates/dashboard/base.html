@@ -24,6 +24,8 @@ static JS islands) stays identical, so that swap is additive, not a rewrite.
   <link rel="stylesheet" href="{% static 'dashboard/dashboard.css' %}">
 
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+  <!-- WebSocket extension for htmx; must load after htmx core (defer preserves order). -->
+  <script src="https://unpkg.com/htmx-ext-ws@2.0.3" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 
   {% block head_extra %}{% endblock %}
@@ -42,7 +44,7 @@ static JS islands) stays identical, so that swap is additive, not a rewrite.
       </nav>
     </header>
 
-    <main class="flex flex-1 flex-col gap-4 overflow-hidden p-4">
+    <main class="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
       {% block content %}{% endblock %}
     </main>
   </div>
