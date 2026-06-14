@@ -1,3 +1,4 @@
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 from apps.profiles.models import AttackerProfile
@@ -17,6 +18,10 @@ class HoneyEvent(models.Model):
     headers = models.JSONField()
     body = models.JSONField(null=True, blank=True)
     ja3_hash = models.CharField(max_length=64, null=True, blank=True)
+    # Tool tags inferred at capture time from the User-Agent (apps.honeypot
+    # .fingerprint.classify_user_agent). A fast, pre-enrichment signal; the
+    # enrich_event task folds these (and the JA3 match) into AttackerProfile.tags.
+    tags = ArrayField(models.CharField(max_length=50), default=list, blank=True)
     user_agent = models.TextField()
     decoy_type = models.CharField(max_length=50, choices=DecoyType.choices)
     timestamp = models.DateTimeField(auto_now_add=True, db_index=True)

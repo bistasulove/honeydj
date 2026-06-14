@@ -26,6 +26,7 @@ from apps.events.models import HoneyEvent
 from apps.feeds.adapters import abuseipdb
 from apps.feeds.adapters.abuseipdb import AbuseVerdict
 from apps.feeds.models import ThreatFeedEntry
+from apps.honeypot.fingerprint import KNOWN_SCANNER_JA3, classify_user_agent
 from apps.profiles.models import AttackerProfile
 
 logger = logging.getLogger(__name__)
@@ -130,14 +131,31 @@ def _apply_enrichment(
         if _record_abuse_verdict(event.ip, verdict):
             score_delta += SCORE_ABUSEIPDB
 
-    # +30 the first time a known-scanner JA3 fingerprint is seen for this IP.
-    if (
-        event.ja3_hash
-        and event.ja3_hash in settings.KNOWN_SCANNER_JA3
-        and not profile.is_known_scanner
-    ):
+    # Known-scanner JA3 fingerprint. The published dict (apps.honeypot
+    # .fingerprint) names the tool; the env-configured settings.KNOWN_SCANNER_JA3
+    # list (architecture.md) is an unnamed local extension of it.
+    scanner_tool = KNOWN_SCANNER_JA3.get(event.ja3_hash or "")
+    is_scanner = bool(event.ja3_hash) and (
+        scanner_tool is not None or event.ja3_hash in settings.KNOWN_SCANNER_JA3
+    )
+    # +30 the first time a known-scanner fingerprint is seen for this IP.
+    if is_scanner and not profile.is_known_scanner:
         profile.is_known_scanner = True
         score_delta += SCORE_KNOWN_SCANNER
+
+    # Fold in tool-identity tags from the JA3 match and the User-Agent. These
+    # name the tooling rather than a technique, so they carry no score of their
+    # own (the +30 scanner match already covers the JA3 signal). Deduped against
+    # both existing profile tags and each other.
+    fingerprint_tags = ([scanner_tool] if scanner_tool else []) + classify_user_agent(
+        event.user_agent
+    )
+    extra_tags: list[str] = []
+    for tag in fingerprint_tags:
+        if tag not in profile.tags and tag not in extra_tags:
+            extra_tags.append(tag)
+    if extra_tags:
+        profile.tags = profile.tags + extra_tags
 
     # Backfill geo/identity fields only when empty — never overwrite good data.
     _fill_geo(profile, geo)

@@ -16,6 +16,7 @@ from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
 
 from apps.events.models import HoneyEvent
+from apps.honeypot.fingerprint import classify_user_agent, parse_ja3_header
 from apps.honeypot.models import DecoyRoute
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ def capture_event(request: HttpRequest, decoy_type: str) -> HoneyEvent | None:
     ip = client_ip(request)
     if over_rate_limit(ip):
         return None
+    user_agent = request.headers.get("User-Agent", "")
     return HoneyEvent.objects.create(
         ip=ip,
         # Full path, not request.path — the query string carries SQLi/traversal
@@ -166,7 +168,8 @@ def capture_event(request: HttpRequest, decoy_type: str) -> HoneyEvent | None:
         method=request.method or "",
         headers=capture_headers(request),
         body=capture_body(request),
-        ja3_hash=request.headers.get("X-JA3-Hash"),
-        user_agent=request.headers.get("User-Agent", ""),
+        ja3_hash=parse_ja3_header(request),
+        tags=classify_user_agent(user_agent),
+        user_agent=user_agent,
         decoy_type=decoy_type,
     )

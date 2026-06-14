@@ -78,6 +78,52 @@ Starts at 0. Incremented by:
 +15 if Tor exit node or known VPN (future: ip-api.com)
 Capped at 100. Never decremented — score is cumulative.
 
+## JA3 fingerprinting & scanner detection
+Two client-fingerprint signals live in apps/honeypot/fingerprint.py and feed
+both the capture path (apps/honeypot/decoys.py) and enrichment (apps/events/tasks.py).
+
+**JA3 (TLS).** nginx computes the JA3 over the TLS ClientHello and forwards the
+MD5 in the `X-JA3-Hash` request header — use nginx's `$ssl_ja3_hash` (the MD5),
+not `$ssl_ja3` (the raw string), so values match the published dict. The app
+never sees the handshake. `parse_ja3_header(request)` returns the header value
+or None; nginx only emits the header over TLS, so plain HTTP yields None.
+
+A JA3 identifies the client's *TLS library*, not the tool: it survives a forged
+User-Agent, but is shared by every tool on the same library and shifts between
+library versions. So a match is strong evidence, not proof, and the dict is a
+deliberately conservative high-signal allowlist.
+
+`KNOWN_SCANNER_JA3: dict[hash, tool_name]` — published MD5s sourced from the
+trisulnsm JA3 fingerprint DB and Salesforce's JA3 writeup:
+- curl — 764b8952…, c458ae71…, 9f198208… (libcurl/OpenSSL builds)
+- python-requests — c398c555… (urllib3/OpenSSL; sqlmap's JA3 collides here)
+- nikto — a563bb12…, f4262963…, 5eeeafdb… (2.1.6, Kali)
+- metasploit — 16f17c89…, 950ccdd6…, 6825b330…, ee031b87… (aux/HTTP scanners)
+- meterpreter — 5d65ea3f… (Linux payload)
+- zgrab — dc76bc3a… (ZMap UMich scanner)
+
+Not in the dict: masscan and nmap don't complete an application TLS handshake by
+default (no stable JA3); sqlmap rides Python's `ssl` so its JA3 collides with
+python-requests; scrapy's JA3 (Twisted/pyOpenSSL) isn't authoritatively
+published. All are caught by User-Agent instead. `settings.KNOWN_SCANNER_JA3`
+is an env-configured list that extends the dict with unnamed local hashes.
+
+**User-Agent.** `classify_user_agent(ua) -> list[str]` matches default UAs for
+sqlmap, nikto, masscan, nmap, zgrab, nuclei, metasploit/meterpreter,
+python-requests, go-http-client, and curl/ (anchored to the `curl/` version
+delimiter). Trivially spoofed, so it's a hint — but most scanners never change
+their default UA. Tags are stable identifiers; renaming one orphans accrued score.
+
+**Where each runs.**
+- Capture (decoys.capture_event): `ja3_hash` from parse_ja3_header; UA tags
+  stored on `HoneyEvent.tags` for immediate pre-enrichment visibility.
+- Enrich (tasks.enrich_event): re-derives both. If the JA3 is in the dict or the
+  settings list, set `AttackerProfile.is_known_scanner = True` and add **+30**
+  once per IP (first match only). The matched tool name (from the dict) plus the
+  UA tags are added to `profile.tags`, deduped. These tool-identity tags carry
+  **no score of their own** — the +30 already credits the JA3 signal, and unlike
+  TTP tags (+10 each) they name the tool rather than a technique.
+
 ## Security of the honeypot itself
 Admin URL: /hd-{ADMIN_URL_SUFFIX}/ — suffix from env var, never hardcoded.
 Admin binds to 127.0.0.1 in production — nginx reverse proxy only.

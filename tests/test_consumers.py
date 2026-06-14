@@ -27,6 +27,8 @@ FULL_ROW = {
     "threat_score": 60,
     "tags": ["sql_injection"],
     "timestamp": "2026-06-14T00:00:00+00:00",
+    "lat": 55.7522,  # forwarded — drives the live map marker
+    "lon": 37.6156,
     "secret": "must not leak",  # not in CLIENT_FIELDS — must be stripped
 }
 TRIMMED_ROW = {
@@ -38,6 +40,8 @@ TRIMMED_ROW = {
     "threat_score": 60,
     "tags": ["sql_injection"],
     "timestamp": "2026-06-14T00:00:00+00:00",
+    "lat": 55.7522,
+    "lon": 37.6156,
 }
 
 
