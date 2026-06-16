@@ -1,7 +1,10 @@
-"""Alert evaluation engine: rule matching, throttling, and the three notifiers."""
+"""Alert evaluation engine: rule matching, throttling, async dispatch, notifiers."""
+
+from unittest.mock import MagicMock
 
 import pytest
 import responses
+from celery.exceptions import Retry
 from django.core import mail
 
 from apps.alerts.evaluator import condition_matches, evaluate_rules
@@ -12,9 +15,22 @@ from apps.alerts.notifiers import (
     SlackNotifier,
     WebhookNotifier,
 )
+from apps.alerts.tasks import dispatch_alert
 from tests.factories import AlertRuleFactory, AttackerProfileFactory, HoneyEventFactory
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def mock_dispatch(monkeypatch):
+    """Replace the ``dispatch_alert`` task as seen by the evaluator.
+
+    Evaluator tests assert that delivery is *queued* with the right ids; they
+    must not run the notifier inline (that's covered by the dispatch tests).
+    """
+    mock = MagicMock()
+    monkeypatch.setattr("apps.alerts.evaluator.dispatch_alert", mock)
+    return mock
 
 SLACK_URL = "https://hooks.slack.com/services/T000/B000/test"
 HOOK_URL = "https://example.com/webhook"
@@ -102,35 +118,29 @@ def test_condition_none_value_does_not_raise():
 # --------------------------------------------------------------------------- #
 
 
-@responses.activate
-def test_evaluate_fires_on_match():
-    responses.add(responses.POST, SLACK_URL, status=200)
+def test_evaluate_queues_dispatch_on_match(mock_dispatch):
     attacker = AttackerProfileFactory(threat_score=90)
     event = HoneyEventFactory(attacker=attacker)
     rule = _slack_rule()
 
     evaluate_rules(attacker, event)
 
-    assert len(responses.calls) == 1
+    mock_dispatch.delay.assert_called_once_with(rule.pk, attacker.pk, event.pk)
     rule.refresh_from_db()
-    assert rule.last_fired is not None
+    assert rule.last_fired is not None  # mute window stamped synchronously
 
 
-@responses.activate
-def test_evaluate_does_not_fire_when_condition_false():
-    responses.add(responses.POST, SLACK_URL, status=200)
+def test_evaluate_does_not_queue_when_condition_false(mock_dispatch):
     attacker = AttackerProfileFactory(threat_score=10)
     event = HoneyEventFactory(attacker=attacker)
     _slack_rule()
 
     evaluate_rules(attacker, event)
 
-    assert len(responses.calls) == 0
+    mock_dispatch.delay.assert_not_called()
 
 
-@responses.activate
-def test_evaluate_does_not_fire_twice_within_window():
-    responses.add(responses.POST, SLACK_URL, status=200)
+def test_evaluate_does_not_queue_twice_within_window(mock_dispatch):
     attacker = AttackerProfileFactory(threat_score=90)
     event = HoneyEventFactory(attacker=attacker)
     _slack_rule()
@@ -138,12 +148,10 @@ def test_evaluate_does_not_fire_twice_within_window():
     evaluate_rules(attacker, event)
     evaluate_rules(attacker, event)
 
-    assert len(responses.calls) == 1
+    assert mock_dispatch.delay.call_count == 1
 
 
-@responses.activate
-def test_evaluate_fires_again_for_a_different_attacker():
-    responses.add(responses.POST, SLACK_URL, status=200)
+def test_evaluate_queues_again_for_a_different_attacker(mock_dispatch):
     _slack_rule()
 
     for ip in ("203.0.113.1", "203.0.113.2"):
@@ -151,38 +159,120 @@ def test_evaluate_fires_again_for_a_different_attacker():
         event = HoneyEventFactory(attacker=attacker)
         evaluate_rules(attacker, event)
 
-    assert len(responses.calls) == 2
+    assert mock_dispatch.delay.call_count == 2
 
 
-@responses.activate
-def test_evaluate_skips_disabled_rules():
-    responses.add(responses.POST, SLACK_URL, status=200)
+def test_evaluate_skips_disabled_rules(mock_dispatch):
     attacker = AttackerProfileFactory(threat_score=90)
     event = HoneyEventFactory(attacker=attacker)
     _slack_rule(enabled=False)
 
     evaluate_rules(attacker, event)
 
-    assert len(responses.calls) == 0
+    mock_dispatch.delay.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# dispatch_alert task                                                          #
+# --------------------------------------------------------------------------- #
 
 
 @responses.activate
-def test_evaluate_failed_delivery_leaves_rule_unmuted():
-    # First send fails (500) → not throttled; second send succeeds and fires.
-    responses.add(responses.POST, SLACK_URL, status=500)
+def test_dispatch_delivers_to_slack():
     responses.add(responses.POST, SLACK_URL, status=200)
     attacker = AttackerProfileFactory(threat_score=90)
     event = HoneyEventFactory(attacker=attacker)
     rule = _slack_rule()
 
-    evaluate_rules(attacker, event)
-    rule.refresh_from_db()
-    assert rule.last_fired is None  # failure didn't stamp last_fired
+    dispatch_alert(rule.pk, attacker.pk, event.pk)
 
-    evaluate_rules(attacker, event)
-    rule.refresh_from_db()
-    assert rule.last_fired is not None
-    assert len(responses.calls) == 2
+    assert len(responses.calls) == 1
+
+
+def test_dispatch_delivers_to_email():
+    attacker = AttackerProfileFactory(threat_score=88)
+    event = HoneyEventFactory(attacker=attacker)
+    rule = AlertRuleFactory(
+        notifier_type=AlertRule.NotifierType.EMAIL,
+        notifier_config={"to": "ops@example.com"},
+    )
+
+    dispatch_alert(rule.pk, attacker.pk, event.pk)
+
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == ["ops@example.com"]
+
+
+@responses.activate
+def test_dispatch_delivers_to_webhook():
+    responses.add(responses.POST, HOOK_URL, status=200)
+    attacker = AttackerProfileFactory(ip="203.0.113.9", threat_score=70)
+    event = HoneyEventFactory(attacker=attacker)
+    rule = AlertRuleFactory(
+        notifier_type=AlertRule.NotifierType.WEBHOOK,
+        notifier_config={"url": HOOK_URL},
+    )
+
+    dispatch_alert(rule.pk, attacker.pk, event.pk)
+
+    assert "203.0.113.9" in responses.calls[0].request.body.decode()
+
+
+@pytest.mark.parametrize("missing", ["rule", "attacker", "event"])
+def test_dispatch_missing_object_is_noop(missing, monkeypatch):
+    attacker = AttackerProfileFactory(threat_score=90)
+    event = HoneyEventFactory(attacker=attacker)
+    rule = _slack_rule()
+    ids = {"rule": rule.pk, "attacker": attacker.pk, "event": event.pk}
+    ids[missing] = 9_999_999  # a pk that doesn't exist
+
+    # If retry were reached this would raise; a clean missing-object path returns.
+    monkeypatch.setattr(
+        dispatch_alert, "retry", lambda *a, **k: pytest.fail("should not retry")
+    )
+
+    dispatch_alert(ids["rule"], ids["attacker"], ids["event"])  # no raise
+
+
+@responses.activate
+def test_dispatch_does_not_retry_on_notifier_returning_false(monkeypatch):
+    # 500 → SlackNotifier logs and returns False; that's terminal, not a retry.
+    responses.add(responses.POST, SLACK_URL, status=500)
+    attacker = AttackerProfileFactory(threat_score=90)
+    event = HoneyEventFactory(attacker=attacker)
+    rule = _slack_rule()
+
+    monkeypatch.setattr(
+        dispatch_alert, "retry", lambda *a, **k: pytest.fail("should not retry")
+    )
+
+    dispatch_alert(rule.pk, attacker.pk, event.pk)  # no raise
+
+    assert len(responses.calls) == 1
+
+
+def test_dispatch_retries_on_unexpected_exception(monkeypatch):
+    attacker = AttackerProfileFactory(threat_score=90)
+    event = HoneyEventFactory(attacker=attacker)
+    rule = _slack_rule()
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("notifier broke its never-raise contract")
+
+    monkeypatch.setattr(SlackNotifier, "send", boom)
+
+    retried_with = []
+
+    def fake_retry(exc=None, **kwargs):
+        retried_with.append(exc)
+        raise Retry()
+
+    monkeypatch.setattr(dispatch_alert, "retry", fake_retry)
+
+    with pytest.raises(Retry):
+        dispatch_alert(rule.pk, attacker.pk, event.pk)
+
+    assert isinstance(retried_with[0], RuntimeError)
 
 
 # --------------------------------------------------------------------------- #

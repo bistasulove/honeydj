@@ -3,8 +3,16 @@
 After ``enrich_event`` folds an event into its attacker profile, it calls
 :func:`evaluate_rules`. We walk every enabled :class:`AlertRule`, test its
 JSON ``condition`` against the freshly-updated profile (and the triggering
-event), and dispatch a notification when it matches — unless we already alerted
+event), and queue a notification when it matches — unless we already alerted
 on this rule for this attacker within the mute window.
+
+We don't deliver inline: the notifier call (a webhook POST, an SMTP send) can
+be slow, and this runs on the tail of the enrichment pipeline. Instead we mute
+the (rule, attacker) pair and stamp ``last_fired`` *synchronously* — both are
+fast local writes — and then hand the actual delivery to the
+``dispatch_alert`` Celery task. Muting before dispatch is deliberate: a second
+matching event for the same attacker arriving before the task runs must not
+queue a duplicate alert.
 
 A ``condition`` is a flat ``{"field": ..., "op": ..., "value": ...}`` triple,
 e.g. ``{"field": "threat_score", "op": "gte", "value": 80}``. Only the fields
@@ -27,7 +35,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from apps.alerts.models import AlertRule
-from apps.alerts.notifiers import NOTIFIER_REGISTRY
+from apps.alerts.tasks import dispatch_alert
 from apps.events.models import HoneyEvent
 from apps.profiles.models import AttackerProfile
 
@@ -78,10 +86,10 @@ OPS: dict[str, Callable[[Any, Any], bool]] = {
 
 
 def evaluate_rules(attacker: AttackerProfile, event: HoneyEvent) -> None:
-    """Fire any enabled alert rule whose condition matches ``attacker``/``event``.
+    """Queue a dispatch for any enabled rule whose condition matches.
 
-    Never raises: a broken rule or a failing notifier is logged and skipped so
-    enrichment always completes.
+    Never raises: a broken rule is logged and skipped so enrichment always
+    completes. Delivery itself happens later, in the ``dispatch_alert`` task.
     """
     for rule in AlertRule.objects.filter(enabled=True):
         if not condition_matches(rule.condition, attacker, event):
@@ -93,7 +101,14 @@ def evaluate_rules(attacker: AttackerProfile, event: HoneyEvent) -> None:
                 attacker.ip,
             )
             continue
-        _fire(rule, attacker, event)
+        _mark_fired(rule, attacker)
+        dispatch_alert.delay(rule.pk, attacker.pk, event.pk)
+        logger.info(
+            "alert: rule %r queued for %s via %s",
+            rule.name,
+            attacker.ip,
+            rule.notifier_type,
+        )
 
 
 def condition_matches(
@@ -129,30 +144,18 @@ def _recently_fired(rule: AlertRule, attacker: AttackerProfile) -> bool:
     return cache.get(_throttle_key(rule, attacker)) is not None
 
 
-def _fire(rule: AlertRule, attacker: AttackerProfile, event: HoneyEvent) -> None:
-    """Dispatch ``rule`` via its notifier; throttle only on confirmed delivery."""
-    notifier_cls = NOTIFIER_REGISTRY.get(rule.notifier_type)
-    if notifier_cls is None:
-        logger.error(
-            "alert: rule %r has unknown notifier_type %r", rule.name, rule.notifier_type
-        )
-        return
+def _mark_fired(rule: AlertRule, attacker: AttackerProfile) -> None:
+    """Open the mute window and stamp ``last_fired`` before handing off delivery.
 
-    delivered = notifier_cls().send(rule, attacker, event)
-    if not delivered:
-        # Leave the rule un-muted so the next matching event from this attacker
-        # gets another shot at delivery.
-        logger.warning(
-            "alert: rule %r failed to deliver for %s; will retry next event",
-            rule.name,
-            attacker.ip,
-        )
-        return
-
+    Both writes happen *before* ``dispatch_alert`` is queued so a duplicate
+    matching event can't slip through and double-dispatch while the task sits in
+    the broker. Because the mute now opens on *attempted* dispatch rather than
+    confirmed delivery, a notifier that ultimately fails leaves the rule muted
+    for the window — the task's own retry handles transient faults instead.
+    """
     cache.set(
         _throttle_key(rule, attacker), True, settings.ALERT_REFIRE_WINDOW_SECONDS
     )
     # last_fired is the rule-wide "last fired at all" stamp for the admin list.
     # Use .update() to touch only that column and avoid clobbering concurrent edits.
     AlertRule.objects.filter(pk=rule.pk).update(last_fired=timezone.now())
-    logger.info("alert: rule %r fired for %s via %s", rule.name, attacker.ip, rule.notifier_type)
