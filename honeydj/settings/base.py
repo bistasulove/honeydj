@@ -230,6 +230,16 @@ UNFOLD = {
                     },
                 ],
             },
+            {
+                "title": _("Alerting"),
+                "items": [
+                    {
+                        "title": _("Alert Rules"),
+                        "icon": "notifications_active",
+                        "link": reverse_lazy("admin:alerts_alertrule_changelist"),
+                    },
+                ],
+            },
         ],
     },
 }
@@ -244,3 +254,14 @@ ABUSEIPDB_TIMEOUT = env.float("ABUSEIPDB_TIMEOUT", default=5.0)
 THREAT_FEED_TTL_DAYS = env.int("THREAT_FEED_TTL_DAYS", default=7)
 # JA3 fingerprints of known mass scanners (zgrab, masscan, etc.).
 KNOWN_SCANNER_JA3 = env.list("KNOWN_SCANNER_JA3", default=[])
+
+# Alerting
+# How long a rule stays muted for a given attacker after it fires once, so a
+# burst of events from the same IP doesn't spam the same notification channel.
+ALERT_REFIRE_WINDOW_SECONDS = env.int("ALERT_REFIRE_WINDOW_SECONDS", default=3600)
+# Network timeout for Slack/webhook POSTs from notifiers.
+ALERT_WEBHOOK_TIMEOUT = env.float("ALERT_WEBHOOK_TIMEOUT", default=5.0)
+# Absolute base URL (scheme + host) used to turn admin change-page paths into
+# clickable links inside alerts. Empty in dev → links are relative paths.
+ADMIN_BASE_URL = env("ADMIN_BASE_URL", default="")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="honeydj@localhost")

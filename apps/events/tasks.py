@@ -20,6 +20,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from apps.alerts.evaluator import evaluate_rules
 from apps.events import ttp
 from apps.events.geoip import lookup as geoip_lookup
 from apps.events.models import HoneyEvent
@@ -82,6 +83,12 @@ def enrich_event(self: Task, event_id: int) -> None:
         # Another worker enriched it first, or the event was deleted mid-flight.
         logger.info("enrich_event: event %s already handled by another worker", event_id)
         return
+
+    # Evaluate alert rules against the now-updated profile. Notifier failures are
+    # swallowed inside the evaluator, so this can never break enrichment.
+    event = HoneyEvent.objects.select_related("attacker").get(pk=event_id)
+    if event.attacker is not None:
+        evaluate_rules(event.attacker, event)
 
     # Broadcast only after the transaction commits, so dashboards never see a
     # row that a rollback would have undone.
