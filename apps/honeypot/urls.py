@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.honeypot import views
+from apps.honeypot.admin_views import CanaryTokenCreateView
 
 app_name = "honeypot"
 
@@ -15,4 +16,18 @@ urlpatterns = [
     path("wp-login.php", views.FakeWpAdminView.as_view(), name="fake_wp_login"),
     path("administrator/", views.FakeAdminView.as_view(), name="fake_admin"),
     path("api/debug/", views.FakeApiDebugView.as_view(), name="fake_api_debug"),
+    # Canary trip-wire. Public and unauthenticated — an attacker who finds the
+    # token must be able to hit it. The UUID is the token's lookup key.
+    path(
+        "canary/<uuid:token_id>/ping/",
+        views.CanaryPingView.as_view(),
+        name="canary_ping",
+    ),
+    # Staff-only token minting (LoginRequiredMixin gates it). Linked from the
+    # CanaryToken admin "Create Token" button.
+    path(
+        "canary/create/",
+        CanaryTokenCreateView.as_view(),
+        name="canary_create",
+    ),
 ]

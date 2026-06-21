@@ -21,6 +21,7 @@ class CanaryToken(models.Model):
     triggered = models.BooleanField(default=False)
     triggered_at = models.DateTimeField(null=True, blank=True)
     trigger_ip = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-pk"]

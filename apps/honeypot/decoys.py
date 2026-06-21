@@ -149,15 +149,23 @@ def over_rate_limit(ip: str) -> bool:
     return count > RATE_LIMIT_MAX
 
 
-def capture_event(request: HttpRequest, decoy_type: str) -> HoneyEvent | None:
+def capture_event(
+    request: HttpRequest, decoy_type: str, *, enforce_rate_limit: bool = True
+) -> HoneyEvent | None:
     """Store a HoneyEvent for a decoy hit, or return ``None`` if rate-limited.
 
     The probe counter is incremented regardless of the cap. The caller is
     responsible for dispatching ``enrich_event`` and logging rate-limit skips,
     so each entry point logs against its own logger.
+
+    ``enforce_rate_limit=False`` skips the per-IP cap (and its probe counter)
+    entirely, so the event is always stored. Canary trips use this: a token
+    fires at most once (guarded by ``CanaryToken.triggered``), it's a rare,
+    high-value signal, and it shouldn't be charged against — or dropped by — the
+    decoy probe budget.
     """
     ip = client_ip(request)
-    if over_rate_limit(ip):
+    if enforce_rate_limit and over_rate_limit(ip):
         return None
     user_agent = request.headers.get("User-Agent", "")
     return HoneyEvent.objects.create(

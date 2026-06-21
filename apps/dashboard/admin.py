@@ -9,13 +9,15 @@ from typing import Any
 
 from django.contrib import admin
 from django.db.models import QuerySet
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
+from django.urls import reverse
 from django.utils.html import format_html, format_html_join
 from unfold.admin import ModelAdmin
-from unfold.decorators import display
+from unfold.decorators import action, display
 
 from apps.events.models import HoneyEvent
-from apps.honeypot.models import DecoyRoute
+from apps.honeypot import canary
+from apps.honeypot.models import CanaryToken, DecoyRoute
 from apps.profiles.models import AttackerProfile
 
 
@@ -171,3 +173,46 @@ class DecoyRouteAdmin(ModelAdmin):  # type: ignore[misc]  # unfold ships no stub
     list_editable = ("is_active", "priority")
     list_filter = ("decoy_type", "is_active", "is_regex")
     search_fields = ("path_pattern", "description")
+
+
+@admin.register(CanaryToken)
+class CanaryTokenAdmin(ModelAdmin):  # type: ignore[misc]  # unfold ships no stubs
+    """Canary token console: mint tokens, copy their ping URLs, watch for trips.
+
+    The "Create Token" button routes to the dedicated minting form, which sets
+    ``created_by`` and the URL type in one code path. The trip-state fields are
+    read-only here: they're stamped by ``CanaryPingView`` when a token fires,
+    never edited by an operator.
+    """
+
+    list_display = (
+        "label",
+        "token_type",
+        "triggered",
+        "trigger_ip",
+        "triggered_at",
+        "created_by",
+        "created_at",
+    )
+    list_filter = ("triggered", "token_type")
+    search_fields = ("label", "trigger_ip")
+    readonly_fields = ("token_id", "triggered", "trigger_ip", "triggered_at")
+    actions = ("copy_url",)
+    # Changelist-level button (unfold) linking to the standalone create form.
+    actions_list = ("create_token_button",)
+
+    @admin.action(description="Copy URL")
+    def copy_url(
+        self, request: HttpRequest, queryset: QuerySet[CanaryToken]
+    ) -> None:
+        """Surface each selected token's full ping URL as a message to copy."""
+        for token in queryset:
+            self.message_user(
+                request,
+                f"{token.label}: {canary.get_canary_url(token, request)}",
+            )
+
+    @action(description="Create Token", url_path="create-token")  # type: ignore[misc]
+    def create_token_button(self, request: HttpRequest) -> HttpResponse:
+        """Redirect to the standalone token-minting form."""
+        return HttpResponseRedirect(reverse("honeypot:canary_create"))

@@ -1,41 +1,41 @@
-# Session notes — 2026-06-16 (async alert dispatch)
+# Session notes — 2026-06-17 (canary token system)
 
 ## What was built
-- `apps/alerts/tasks.py` — real `dispatch_alert(self, rule_id, attacker_id,
-  event_id)` task (`bind=True, max_retries=2, default_retry_delay=5,
-  queue="alerts"`). Reloads the 3 rows by id; missing any → log warning, return,
-  no retry. Notifier-send body moved here from the old `_fire`.
-- `apps/alerts/evaluator.py` — `evaluate_rules` now calls
-  `dispatch_alert.delay(rule.pk, attacker.pk, event.pk)`. `_fire` deleted,
-  replaced by `_mark_fired` (sets cache mute + stamps `last_fired`). Dropped the
-  `NOTIFIER_REGISTRY` import; added `from apps.alerts.tasks import dispatch_alert`.
-- `tests/test_alerts.py` — evaluator tests mock `dispatch_alert` (via
-  `mock_dispatch` fixture patching `apps.alerts.evaluator.dispatch_alert`) and
-  assert `.delay(...)` args. New dispatch_alert section: per-notifier delivery,
-  missing-object no-op (parametrized), no-retry on notifier False, retry on
-  unexpected exception.
+- `apps/honeypot/canary.py` — `generate_url_token(label, created_by)`,
+  `get_canary_url(token, request)` (absolute, via `reverse` +
+  `build_absolute_uri`), `record_trigger(token, request)` (race-safe conditional
+  UPDATE claim, logs `canary` HoneyEvent, `enrich_event.delay()`, fires alerts).
+- `apps/honeypot/views.py` — `CanaryPingView` (public, csrf-exempt, GET/POST),
+  returns a 42-byte transparent 1×1 GIF with no-store headers; unknown UUID → 404.
+- `apps/honeypot/admin_views.py` — `CanaryTokenCreateView` (LoginRequired): GET
+  serves a self-posting form, POST mints a url token → JSON {token_id, ping_url}.
+- `apps/honeypot/urls.py` — `canary/<uuid:token_id>/ping/` (root-mounted, outside
+  admin prefix) + `canary/create/`.
+- `apps/dashboard/admin.py` — `CanaryTokenAdmin` (Copy URL action + unfold
+  `actions_list` "Create Token" button → create view).
+- `apps/honeypot/decoys.py` — `capture_event` gained `enforce_rate_limit` kwarg.
+- Models: `events` `CANARY` decoy type; `honeypot` `CanaryToken.created_at`.
+  Migrations `events/0003`, `honeypot/0003`, applied.
+- `tests/test_canary.py` — 11 tests.
 
 ## Key decisions
-- Mute + `last_fired` are stamped **synchronously before** dispatch, so a
-  duplicate matching event can't double-queue while the task sits in the broker.
-- **Behavior change:** mute now opens on *attempted* dispatch, not *confirmed*
-  delivery. A failed send stays muted for the window; the task's own retry
-  (unexpected exceptions only) covers transient faults. Removed the obsolete
-  `test_evaluate_failed_delivery_leaves_rule_unmuted`.
-- Notifier returning False is terminal (it already logged) — don't retry.
-- Pass ids, not objects (Celery JSON-serialises args over the broker).
+- Canary alerts fire **synchronously** in the trip path (not just async
+  enrichment) so operators hear immediately; evaluator's per-(rule,attacker) mute
+  prevents the later enrichment pass double-sending.
+- Trips skip rate limiting (`enforce_rate_limit=False`) — rare, high-value, and
+  guarded once by `triggered`.
+- Added `created_at` because the requested admin `list_display` referenced it.
 
 ## Broken / incomplete
-- Nothing broken. Suite: 131 passed, coverage 89.42%, ruff + mypy clean.
-- Not yet committed (I never commit) — `feat: async alert dispatch via Celery`.
+- Nothing broken. Suite: 142 passed, 89.98% coverage, ruff + mypy clean.
+- No `AlertRule` yet exists with `condition decoy_type == "canary"` — needed to
+  actually deliver a canary notification.
 
 ## Next task to resume from
-Commit, then: decide whether `dispatch_alert` should *un-mute* on terminal
-failure so the next event retries (current design keeps it muted).
+Decide on / create a default canary AlertRule (decoy_type eq canary), then
+commit (`feat: canary token system`).
 
 ## Gotchas
-- Calling `dispatch_alert(...)` directly runs the body sync with `self` bound —
-  use it in tests; patch `dispatch_alert.retry` to assert retry/no-retry.
-- No `CELERY_TASK_ALWAYS_EAGER` in tests; `.delay()` would hit Redis, so always
-  mock it in evaluator tests.
-- Tests live in top-level `tests/`, run via `docker compose exec -T web pytest`.
+- Long-lived `web`/`celery` containers cache old code — **restart after model/
+  enum changes** (a stale process 500'd on the new `CANARY` member until restart).
+- `client_ip()` trusts first `X-Forwarded-For` hop.

@@ -10,6 +10,7 @@ class HoneyEvent(models.Model):
         ENV = "env", "Env"
         WP_ADMIN = "wpAdmin", "WP Admin"
         API = "api", "API"
+        CANARY = "canary", "Canary"
         CUSTOM = "custom", "Custom"
 
     ip = models.GenericIPAddressField(db_index=True)
