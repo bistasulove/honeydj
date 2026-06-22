@@ -1,41 +1,44 @@
-# Session notes — 2026-06-17 (canary token system)
+# Session notes — 2026-06-22 (demoable end-to-end + simulate_scanner)
 
 ## What was built
-- `apps/honeypot/canary.py` — `generate_url_token(label, created_by)`,
-  `get_canary_url(token, request)` (absolute, via `reverse` +
-  `build_absolute_uri`), `record_trigger(token, request)` (race-safe conditional
-  UPDATE claim, logs `canary` HoneyEvent, `enrich_event.delay()`, fires alerts).
-- `apps/honeypot/views.py` — `CanaryPingView` (public, csrf-exempt, GET/POST),
-  returns a 42-byte transparent 1×1 GIF with no-store headers; unknown UUID → 404.
-- `apps/honeypot/admin_views.py` — `CanaryTokenCreateView` (LoginRequired): GET
-  serves a self-posting form, POST mints a url token → JSON {token_id, ping_url}.
-- `apps/honeypot/urls.py` — `canary/<uuid:token_id>/ping/` (root-mounted, outside
-  admin prefix) + `canary/create/`.
-- `apps/dashboard/admin.py` — `CanaryTokenAdmin` (Copy URL action + unfold
-  `actions_list` "Create Token" button → create view).
-- `apps/honeypot/decoys.py` — `capture_event` gained `enforce_rate_limit` kwarg.
-- Models: `events` `CANARY` decoy type; `honeypot` `CanaryToken.created_at`.
-  Migrations `events/0003`, `honeypot/0003`, applied.
-- `tests/test_canary.py` — 11 tests.
+- `apps/honeypot/management/commands/simulate_scanner.py` — added **scenario
+  mode** (default when `--ip` omitted) alongside the preserved single-shot mode.
+  Fires a curated wave through real `HoneyMiddleware`: 4+ decoy types, realistic
+  scanner UAs/JA3s, SQLi in query+body, 3-5 public IPs (DE/RU/CN/NL/US), a fresh
+  canary trip, and demo `AlertRule`s. Flags: `--count` (15), `--watch` (1-2s
+  pacing, `--delay`), `--settle`. Auto-creates routes + 2 demo alert rules +
+  canary token; prints a pipeline report.
+- `tests/test_simulate_scanner.py` — +6 scenario tests (inline_pipeline fixture).
+- `docs/DEMO.md` — copy-paste screen-recording runbook.
+- `.gitignore` — added `geoip/*.mmdb` (license + size + staleness).
 
 ## Key decisions
-- Canary alerts fire **synchronously** in the trip path (not just async
-  enrichment) so operators hear immediately; evaluator's per-(rule,attacker) mute
-  prevents the later enrichment pass double-sending.
-- Trips skip rate limiting (`enforce_rate_limit=False`) — rare, high-value, and
-  guarded once by `triggered`.
-- Added `created_at` because the requested admin `list_display` referenced it.
+- `--ip` present → single-shot (keeps 6 legacy tests); absent → scenario.
+- Scenario dispatches to the **real Celery worker** so the live dashboard updates.
+- Public DNS/Tor IPs chosen ONLY because GeoLite2 resolves them (TEST-NET won't).
+- Command creates demo AlertRules itself (none existed) so dispatch_alert fires.
+- GeoLite2 DB is NOT committed (MaxMind EULA, ~66MB, weekly updates).
+
+## Verified live (full Docker stack)
+enriched 15/15 ✓ · profiles scored + is_known_scanner ✓ · canary triggered ✓ ·
+dispatch_alert ran in worker ✓ · WebSocket push confirmed cross-process ✓ ·
+**GeoIP now installed at `geoip/GeoLite2-City.mmdb` → lookups resolve, profiles
+geolocated, map markers render** ✓.
 
 ## Broken / incomplete
-- Nothing broken. Suite: 142 passed, 89.98% coverage, ruff + mypy clean.
-- No `AlertRule` yet exists with `condition decoy_type == "canary"` — needed to
-  actually deliver a canary notification.
+- Demo alert webhook is a placeholder → notifier logs 405; dispatch still fires
+  (point a rule at a real Slack/webhook URL to see delivery).
+- Older profiles enriched pre-GeoIP keep null geo unless re-seen (`_fill_geo`
+  backfills empty fields on the next event). DEMO.md §5 resets demo data.
+- No `geoipupdate`/cron yet to refresh the DB (manual download for now).
 
 ## Next task to resume from
-Decide on / create a default canary AlertRule (decoy_type eq canary), then
-commit (`feat: canary token system`).
+Commit (`feat: scenario simulate_scanner + demo runbook`). Optionally wire up
+`geoipupdate` for periodic GeoLite2 refresh.
 
 ## Gotchas
-- Long-lived `web`/`celery` containers cache old code — **restart after model/
-  enum changes** (a stale process 500'd on the new `CANARY` member until restart).
-- `client_ip()` trusts first `X-Forwarded-For` hop.
+- 148 tests pass, 90.46% cov; ruff + mypy clean.
+- geoip reader caches availability at process start — restart celery after
+  installing the DB.
+- enrich's `_broadcast` is on_commit — tests skip it without
+  `django_capture_on_commit_callbacks`.

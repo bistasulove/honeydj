@@ -147,6 +147,10 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# GeoIP databases — downloaded per-host from a MaxMind account, not redistributable
+# (GeoLite2 EULA), large, and updated ~weekly. The code degrades gracefully if absent.
+geoip/*.mmdb
+
 # Environments
 .env
 .envrc

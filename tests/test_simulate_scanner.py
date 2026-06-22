@@ -11,8 +11,9 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
+from apps.alerts.models import AlertRule
 from apps.events.models import HoneyEvent
-from apps.honeypot.models import DecoyRoute
+from apps.honeypot.models import CanaryToken, DecoyRoute
 from apps.profiles.models import AttackerProfile
 
 pytestmark = pytest.mark.django_db
@@ -108,3 +109,77 @@ def test_rate_limited_raises_command_error(no_geo):
 
     with pytest.raises(CommandError, match="rate limited"):
         run("--ip", "203.0.113.55")
+
+
+# --- Scenario mode (no --ip) ----------------------------------------------
+
+
+@pytest.fixture
+def inline_pipeline(monkeypatch):
+    """Run the async pipeline synchronously so the scenario is testable worker-free.
+
+    ``enrich_event.delay`` runs the task inline (so events end up enriched and
+    profiles scored), ``dispatch_alert.delay`` is captured (no real notifier), and
+    GeoIP returns nothing. Returns the list of captured dispatch_alert arg-tuples.
+    """
+    from apps.alerts import tasks as alert_tasks
+    from apps.events import tasks as event_tasks
+
+    monkeypatch.setattr("apps.events.tasks.geoip_lookup", lambda ip: {})
+    dispatched_alerts: list[tuple] = []
+    monkeypatch.setattr(alert_tasks.dispatch_alert, "delay",
+                        lambda *args, **kwargs: dispatched_alerts.append(args))
+    monkeypatch.setattr(event_tasks.enrich_event, "delay",
+                        lambda event_id: event_tasks.enrich_event(event_id))
+    return dispatched_alerts
+
+
+def test_scenario_covers_four_decoy_types_and_canary(inline_pipeline):
+    run("--count", "15", "--settle", "0")
+
+    assert HoneyEvent.objects.count() == 15
+    decoy_types = set(HoneyEvent.objects.values_list("decoy_type", flat=True))
+    assert {"admin", "env", "wpAdmin", "api", "canary"} <= decoy_types
+    # 3-5 distinct source IPs.
+    assert 3 <= HoneyEvent.objects.values("ip").distinct().count() <= 5
+
+
+def test_scenario_trips_a_canary_token(inline_pipeline):
+    run("--count", "15", "--settle", "0")
+
+    token = CanaryToken.objects.filter(triggered=True).first()
+    assert token is not None
+    assert token.trigger_ip is not None
+    assert HoneyEvent.objects.filter(decoy_type="canary").exists()
+
+
+def test_scenario_flags_known_scanner_with_high_score(inline_pipeline):
+    run("--count", "15", "--settle", "0")
+
+    # IP_DE hits the admin (SQLi) and .env decoys with a known-scanner JA3.
+    profile = AttackerProfile.objects.get(ip="185.220.101.34")
+    assert profile.is_known_scanner is True
+    assert "sql_injection" in profile.tags
+    assert profile.threat_score >= 40  # +30 scanner JA3, +10 per TTP tag
+
+
+def test_scenario_creates_demo_rules_and_fires_alerts(inline_pipeline):
+    run("--count", "15", "--settle", "0")
+
+    rules = set(AlertRule.objects.values_list("name", flat=True))
+    assert "Demo: known scanner detected" in rules
+    assert "Demo: canary token tripped" in rules
+    # At least the known-scanner and canary rules dispatched.
+    assert len(inline_pipeline) >= 2
+
+
+def test_scenario_small_count_still_covers_canary(inline_pipeline):
+    run("--count", "5", "--settle", "0")
+
+    assert HoneyEvent.objects.count() == 5
+    assert CanaryToken.objects.filter(triggered=True).exists()
+
+
+def test_scenario_rejects_zero_count(inline_pipeline):
+    with pytest.raises(CommandError, match="--count must be at least 1"):
+        run("--count", "0")
